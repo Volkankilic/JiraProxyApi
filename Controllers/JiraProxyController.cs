@@ -40,9 +40,11 @@ public class JiraProxyController : ControllerBase
                 ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
                 ?? "volkan.kilic@atptech.com";
             
-           var jiraApiToken = _configuration["Jira:ApiToken"] 
-    ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN")
-    ?? throw new InvalidOperationException($"JIRA_API_TOKEN bulunamadı. Env vars: {string.Join(", ", Environment.GetEnvironmentVariableNames().Where(n => n.Contains("JIRA")))}");
+         // TEST İÇİN: Token koda gömülü (PRODUCTION'DA KALDIRIN!)
+    var jiraApiToken = _configuration["Jira:ApiToken"] 
+        ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN") 
+        ?? "ATATT3xFfGF0WKePxb7e6rfXt2U8U7lHCAkCctjga-iWt2JLkVF99HDlcjE2Kyu21j5SF2j87p5cQG5_m9bVC6HwXEm1StYKM_-2TxWkNsMDwNu97aNQjFzrxskhr8plzc__vTIWKcWfCWx1xh-TBiNNv_28ITK199Lovb38_lB3q5AX9OTphMQ=1A126BDC";
+
 
             // API token kontrolü
             if (jiraApiToken == "YOUR_JIRA_API_TOKEN_HERE" || string.IsNullOrWhiteSpace(jiraApiToken))

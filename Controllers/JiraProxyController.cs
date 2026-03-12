@@ -156,7 +156,7 @@ public class JiraProxyController : ControllerBase
         
         var jiraApiToken = _configuration["Jira:ApiToken"] 
             ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN") 
-            ?? "NOT_SET";
+            ?? "ATATT3xFfGF0WKePxb7e6rfXt2U8U7lHCAkCctjga-iWt2JLkVF99HDlcjE2Kyu21j5SF2j87p5cQG5_m9bVC6HwXEm1StYKM_-2TxWkNsMDwNu97aNQjFzrxskhr8plzc__vTIWKcWfCWx1xh-TBiNNv_28ITK199Lovb38_lB3q5AX9OTphMQ=1A126BDC";
 
         var hasToken = !string.IsNullOrWhiteSpace(jiraApiToken) 
             && jiraApiToken != "YOUR_JIRA_API_TOKEN_HERE" 
@@ -169,6 +169,70 @@ public class JiraProxyController : ControllerBase
             tokenLength = hasToken ? jiraApiToken.Length : 0,
             message = hasToken ? "API token ayarlı" : "API token ayarlanmamış - appsettings.json'ı kontrol edin"
         });
+    }
+
+    [HttpGet("test-auth")]
+    public async Task<IActionResult> TestAuth()
+    {
+        try
+        {
+            var jiraBaseUrl = _configuration["Jira:BaseUrl"] 
+                ?? Environment.GetEnvironmentVariable("JIRA_BASE_URL") 
+                ?? "https://atptech.atlassian.net";
+            
+            var jiraEmail = _configuration["Jira:Email"] 
+                ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
+                ?? "volkan.kilic@atptech.com";
+            
+            var jiraApiToken = _configuration["Jira:ApiToken"] 
+                ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN") 
+                ?? "ATATT3xFfGF0WKePxb7e6rfXt2U8U7lHCAkCctjga-iWt2JLkVF99HDlcjE2Kyu21j5SF2j87p5cQG5_m9bVC6HwXEm1StYKM_-2TxWkNsMDwNu97aNQjFzrxskhr8plzc__vTIWKcWfCWx1xh-TBiNNv_28ITK199Lovb38_lB3q5AX9OTphMQ=1A126BDC";
+
+            // API token ile mevcut kullanıcıyı kontrol et
+            var authString = $"{jiraEmail}:{jiraApiToken}";
+            var authBytes = Encoding.UTF8.GetBytes(authString);
+            var authBase64 = Convert.ToBase64String(authBytes);
+
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Authorization = 
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authBase64);
+            httpClient.DefaultRequestHeaders.Accept.Add(
+                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+
+            // Mevcut kullanıcı bilgisini al
+            var userUrl = $"{jiraBaseUrl}/rest/api/3/myself";
+            var userResponse = await httpClient.GetAsync(userUrl);
+
+            if (userResponse.IsSuccessStatusCode)
+            {
+                var userContent = await userResponse.Content.ReadAsStringAsync();
+                var userData = System.Text.Json.JsonSerializer.Deserialize<object>(userContent);
+                
+                return Ok(new { 
+                    success = true,
+                    message = "API token çalışıyor",
+                    authenticatedUser = userData,
+                    email = jiraEmail
+                });
+            }
+            else
+            {
+                var errorContent = await userResponse.Content.ReadAsStringAsync();
+                return StatusCode((int)userResponse.StatusCode, new { 
+                    success = false,
+                    message = "API token authentication başarısız",
+                    statusCode = userResponse.StatusCode,
+                    error = errorContent
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { 
+                success = false,
+                error = ex.Message 
+            });
+        }
     }
 }
 

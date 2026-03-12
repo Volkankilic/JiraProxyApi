@@ -40,7 +40,10 @@ artifacts/
 *.rsuser
 
 # Sensitive files (API tokens)
+appsettings.json
 appsettings.Production.json
 appsettings.Local.json
+appsettings.*.json
+
 
 

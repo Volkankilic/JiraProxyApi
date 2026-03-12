@@ -40,11 +40,10 @@ public class JiraProxyController : ControllerBase
                 ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
                 ?? "volkan.kilic@atptech.com";
             
-         // TEST İÇİN: Token koda gömülü (PRODUCTION'DA KALDIRIN!)
-    var jiraApiToken = _configuration["Jira:ApiToken"] 
-        ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN") 
-        ?? "ATATT3xFfGF0WKePxb7e6rfXt2U8U7lHCAkCctjga-iWt2JLkVF99HDlcjE2Kyu21j5SF2j87p5cQG5_m9bVC6HwXEm1StYKM_-2TxWkNsMDwNu97aNQjFzrxskhr8plzc__vTIWKcWfCWx1xh-TBiNNv_28ITK199Lovb38_lB3q5AX9OTphMQ=1A126BDC";
-
+            // TEST İÇİN: Token koda gömülü (PRODUCTION'DA KALDIRIN!)
+            var jiraApiToken = _configuration["Jira:ApiToken"] 
+                ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN") 
+                ?? "ATATT3xFfGF0WKePxb7e6rfXt2U8U7lHCAkCctjga-iWt2JLkVF99HDlcjE2Kyu21j5SF2j87p5cQG5_m9bVC6HwXEm1StYKM_-2TxWkNsMDwNu97aNQjFzrxskhr8plzc__vTIWKcWfCWx1xh-TBiNNv_28ITK199Lovb38_lB3q5AX9OTphMQ=1A126BDC";
 
             // API token kontrolü
             if (jiraApiToken == "YOUR_JIRA_API_TOKEN_HERE" || string.IsNullOrWhiteSpace(jiraApiToken))
@@ -56,14 +55,20 @@ public class JiraProxyController : ControllerBase
             }
 
             // Debug için log (production'da kaldırın)
-            _logger.LogInformation("Jira API çağrısı: BaseUrl={BaseUrl}, Email={Email}, Key={Key}", 
-                jiraBaseUrl, jiraEmail, jiraKey);
+            _logger.LogInformation("Jira API çağrısı: BaseUrl={BaseUrl}, Email={Email}, Key={Key}, TokenLength={TokenLength}", 
+                jiraBaseUrl, jiraEmail, jiraKey, jiraApiToken?.Length ?? 0);
 
             var jiraApiUrl = $"{jiraBaseUrl}/rest/api/3/issue/{jiraKey}";
             
-            // Basic Auth için base64 encode
-            var authBytes = Encoding.UTF8.GetBytes($"{jiraEmail}:{jiraApiToken}");
+            // Jira Cloud için Basic Auth: email:token formatı
+            // Bazı durumlarda sadece token kullanılabilir, önce email:token deneyelim
+            var authString = $"{jiraEmail}:{jiraApiToken}";
+            var authBytes = Encoding.UTF8.GetBytes(authString);
             var authBase64 = Convert.ToBase64String(authBytes);
+            
+            // Debug: Authentication bilgilerini logla (production'da kaldırın)
+            _logger.LogInformation("Auth - Email: {Email}, TokenLength: {TokenLength}, Base64Length: {Base64Length}", 
+                jiraEmail, jiraApiToken?.Length ?? 0, authBase64.Length);
 
             // HttpClient ile Jira API'ye istek yap
             var httpClient = _httpClientFactory.CreateClient();
@@ -71,8 +76,30 @@ public class JiraProxyController : ControllerBase
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authBase64);
             httpClient.DefaultRequestHeaders.Accept.Add(
                 new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+            
+            // User-Agent ekle (bazı API'ler bunu ister)
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "JiraProxyApi/1.0");
 
+            _logger.LogInformation("Jira API isteği gönderiliyor: {Url}", jiraApiUrl);
             var response = await httpClient.GetAsync(jiraApiUrl);
+            
+            // Response headers'ı logla
+            _logger.LogInformation("Jira API yanıtı: StatusCode={StatusCode}, ContentType={ContentType}", 
+                response.StatusCode, response.Content.Headers.ContentType?.ToString() ?? "null");
+            
+            // Eğer 401 Unauthorized alırsak, sadece token ile deneyelim
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                _logger.LogWarning("401 Unauthorized alındı, sadece token ile tekrar deniyoruz...");
+                
+                // Sadece token ile deneme (bazı Jira Cloud kurulumlarında gerekebilir)
+                var tokenOnlyAuth = Convert.ToBase64String(Encoding.UTF8.GetBytes($":{jiraApiToken}"));
+                httpClient.DefaultRequestHeaders.Authorization = 
+                    new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", tokenOnlyAuth);
+                
+                response = await httpClient.GetAsync(jiraApiUrl);
+                _logger.LogInformation("Token-only auth denemesi: StatusCode={StatusCode}", response.StatusCode);
+            }
 
             if (!response.IsSuccessStatusCode)
             {

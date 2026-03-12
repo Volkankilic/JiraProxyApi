@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Text;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace JiraProxyApi.Controllers;
 
@@ -21,6 +23,20 @@ public class JiraProxyController : ControllerBase
         _logger = logger;
     }
 
+    // Helper method: Önce IConfiguration'dan, sonra Environment variable'dan oku
+    private string? GetConfigValue(string key)
+    {
+        // Önce IConfiguration'dan dene (Railway environment variables otomatik olarak buraya gelir)
+        var configValue = _configuration[key];
+        if (!string.IsNullOrWhiteSpace(configValue))
+        {
+            return configValue;
+        }
+
+        // IConfiguration'da yoksa Environment variable'dan oku
+        return Environment.GetEnvironmentVariable(key);
+    }
+
     [HttpGet("issue")]
     public async Task<IActionResult> GetIssue([FromQuery] string jiraKey)
     {
@@ -31,25 +47,31 @@ public class JiraProxyController : ControllerBase
 
         try
         {
-            // appsettings.json'dan oku (öncelikli)
-            // Eğer appsettings.json'da yoksa environment variable'dan oku
-            var jiraBaseUrl = _configuration["Jira:BaseUrl"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_BASE_URL") 
-                ?? "https://atptech.atlassian.net";
-            
-            var jiraEmail = _configuration["Jira:Email"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
-                ?? "volkan.kilic@atptech.com";
-            
-            var jiraApiToken = _configuration["Jira:ApiToken"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN");
-
-            // API token kontrolü
-            if (string.IsNullOrWhiteSpace(jiraApiToken) || jiraApiToken == "YOUR_JIRA_API_TOKEN_HERE")
+            // Önce IConfiguration'dan, sonra Environment variable'dan oku (garanti için her ikisini de dene)
+            var jiraBaseUrl = GetConfigValue("JIRA_BASE_URL");
+            if (string.IsNullOrWhiteSpace(jiraBaseUrl))
             {
                 return BadRequest(new { 
-                    error = "Jira API token ayarlanmamış.",
-                    hint = "Lütfen appsettings.json dosyasındaki 'Jira:ApiToken' değerini güncelleyin veya JIRA_API_TOKEN environment variable'ını ayarlayın."
+                    error = "JIRA_BASE_URL environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_BASE_URL environment variable'ını ayarlayın."
+                });
+            }
+            
+            var jiraEmail = GetConfigValue("JIRA_EMAIL");
+            if (string.IsNullOrWhiteSpace(jiraEmail))
+            {
+                return BadRequest(new { 
+                    error = "JIRA_EMAIL environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_EMAIL environment variable'ını ayarlayın."
+                });
+            }
+            
+            var jiraApiToken = GetConfigValue("JIRA_API_TOKEN");
+            if (string.IsNullOrWhiteSpace(jiraApiToken))
+            {
+                return BadRequest(new { 
+                    error = "JIRA_API_TOKEN environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_API_TOKEN environment variable'ını ayarlayın."
                 });
             }
 
@@ -154,26 +176,36 @@ public class JiraProxyController : ControllerBase
     public IActionResult GetConfig()
     {
         // Güvenlik: Production'da bu endpoint'i kaldırın veya sadece email gösterin
-        var jiraBaseUrl = _configuration["Jira:BaseUrl"] 
-            ?? Environment.GetEnvironmentVariable("JIRA_BASE_URL") 
-            ?? "https://atptech.atlassian.net";
-        
-        var jiraEmail = _configuration["Jira:Email"] 
-            ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
-            ?? "volkan.kilic@atptech.com";
-        
-        var jiraApiToken = _configuration["Jira:ApiToken"] 
-            ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN");
+        var jiraBaseUrl = GetConfigValue("JIRA_BASE_URL");
+        var jiraEmail = GetConfigValue("JIRA_EMAIL");
+        var jiraApiToken = GetConfigValue("JIRA_API_TOKEN");
 
-        var hasToken = !string.IsNullOrWhiteSpace(jiraApiToken) 
-            && jiraApiToken != "YOUR_JIRA_API_TOKEN_HERE";
+        var missingVars = new List<string>();
+        if (string.IsNullOrWhiteSpace(jiraBaseUrl)) missingVars.Add("JIRA_BASE_URL");
+        if (string.IsNullOrWhiteSpace(jiraEmail)) missingVars.Add("JIRA_EMAIL");
+        if (string.IsNullOrWhiteSpace(jiraApiToken)) missingVars.Add("JIRA_API_TOKEN");
+
+        // Hangi yöntemle okunduğunu kontrol et
+        var sourceInfo = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_configuration["JIRA_BASE_URL"])) sourceInfo.Add("IConfiguration");
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("JIRA_BASE_URL"))) sourceInfo.Add("Environment.GetEnvironmentVariable");
+
+        if (missingVars.Any())
+        {
+            return StatusCode(500, new { 
+                error = "Eksik environment variables",
+                missingVariables = missingVars,
+                hint = "Lütfen Railway'de tüm gerekli environment variables'ları ayarlayın."
+            });
+        }
 
         return Ok(new { 
             jiraBaseUrl = jiraBaseUrl,
             jiraEmail = jiraEmail,
-            hasApiToken = hasToken,
-            tokenLength = hasToken ? jiraApiToken.Length : 0,
-            message = hasToken ? "API token ayarlı" : "API token ayarlanmamış - appsettings.json'ı kontrol edin"
+            hasApiToken = true,
+            tokenLength = jiraApiToken.Length,
+            source = string.Join(" + ", sourceInfo.Distinct()),
+            message = "Tüm environment variables ayarlı (her iki yöntemle de okunuyor)"
         });
     }
 
@@ -182,23 +214,34 @@ public class JiraProxyController : ControllerBase
     {
         try
         {
-            var jiraBaseUrl = _configuration["Jira:BaseUrl"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_BASE_URL") 
-                ?? "https://atptech.atlassian.net";
-            
-            var jiraEmail = _configuration["Jira:Email"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_EMAIL") 
-                ?? "volkan.kilic@atptech.com";
-            
-            var jiraApiToken = _configuration["Jira:ApiToken"] 
-                ?? Environment.GetEnvironmentVariable("JIRA_API_TOKEN");
-            
-            if (string.IsNullOrWhiteSpace(jiraApiToken) || jiraApiToken == "YOUR_JIRA_API_TOKEN_HERE")
+            // Önce IConfiguration'dan, sonra Environment variable'dan oku (garanti için her ikisini de dene)
+            var jiraBaseUrl = GetConfigValue("JIRA_BASE_URL");
+            if (string.IsNullOrWhiteSpace(jiraBaseUrl))
             {
                 return StatusCode(500, new { 
                     success = false,
-                    error = "API token ayarlanmamış",
-                    hint = "appsettings.json'da 'Jira:ApiToken' değerini ayarlayın"
+                    error = "JIRA_BASE_URL environment variable ayarlanmamış",
+                    hint = "Railway'de JIRA_BASE_URL environment variable'ını ayarlayın"
+                });
+            }
+            
+            var jiraEmail = GetConfigValue("JIRA_EMAIL");
+            if (string.IsNullOrWhiteSpace(jiraEmail))
+            {
+                return StatusCode(500, new { 
+                    success = false,
+                    error = "JIRA_EMAIL environment variable ayarlanmamış",
+                    hint = "Railway'de JIRA_EMAIL environment variable'ını ayarlayın"
+                });
+            }
+            
+            var jiraApiToken = GetConfigValue("JIRA_API_TOKEN");
+            if (string.IsNullOrWhiteSpace(jiraApiToken))
+            {
+                return StatusCode(500, new { 
+                    success = false,
+                    error = "JIRA_API_TOKEN environment variable ayarlanmamış",
+                    hint = "Railway'de JIRA_API_TOKEN environment variable'ını ayarlayın"
                 });
             }
 

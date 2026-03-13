@@ -343,5 +343,131 @@ public class JiraProxyController : ControllerBase
             });
         }
     }
+
+    [HttpPut("issue/{jiraKey}/customfield")]
+    public async Task<IActionResult> UpdateCustomField(
+        [FromRoute] string jiraKey,
+        [FromBody] UpdateCustomFieldRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(jiraKey))
+        {
+            return BadRequest(new { error = "Jira key gerekli" });
+        }
+
+        if (request == null || string.IsNullOrWhiteSpace(request.FieldId))
+        {
+            return BadRequest(new { error = "FieldId ve value gerekli" });
+        }
+
+        try
+        {
+            var jiraBaseUrl = GetConfigValue("JIRA_BASE_URL");
+            if (string.IsNullOrWhiteSpace(jiraBaseUrl))
+            {
+                return BadRequest(new { 
+                    error = "JIRA_BASE_URL environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_BASE_URL environment variable'ını ayarlayın."
+                });
+            }
+            
+            var jiraEmail = GetConfigValue("JIRA_EMAIL");
+            if (string.IsNullOrWhiteSpace(jiraEmail))
+            {
+                return BadRequest(new { 
+                    error = "JIRA_EMAIL environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_EMAIL environment variable'ını ayarlayın."
+                });
+            }
+            
+            var jiraApiToken = GetConfigValue("JIRA_API_TOKEN");
+            if (string.IsNullOrWhiteSpace(jiraApiToken))
+            {
+                return BadRequest(new { 
+                    error = "JIRA_API_TOKEN environment variable ayarlanmamış.",
+                    hint = "Lütfen Railway'de JIRA_API_TOKEN environment variable'ını ayarlayın."
+                });
+            }
+
+            var jiraApiUrl = $"{jiraBaseUrl}/rest/api/3/issue/{jiraKey}";
+            
+            var authString = $"{jiraEmail}:{jiraApiToken}";
+            var authBytes = Encoding.UTF8.GetBytes(authString);
+            var authBase64 = Convert.ToBase64String(authBytes);
+            
+            var httpClient = _httpClientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Authorization = 
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Basic", authBase64);
+            httpClient.DefaultRequestHeaders.Accept.Add(
+                new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "JiraProxyApi/1.0");
+
+            // Jira API formatına göre request body oluştur
+            var updateBody = new
+            {
+                fields = new Dictionary<string, object>
+                {
+                    { request.FieldId, request.Value }
+                }
+            };
+
+            var jsonBody = System.Text.Json.JsonSerializer.Serialize(updateBody);
+            var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+
+            _logger.LogInformation("Jira custom field güncelleme: Key={Key}, Field={Field}, Value={Value}", 
+                jiraKey, request.FieldId, request.Value);
+
+            var response = await httpClient.PutAsync(jiraApiUrl, content);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                _logger.LogWarning("Jira custom field güncelleme hatası: {StatusCode} - {Error}", 
+                    response.StatusCode, errorContent);
+                
+                var errorMessage = response.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.NotFound => "Jira issue bulunamadı veya erişim yetkiniz yok.",
+                    System.Net.HttpStatusCode.Unauthorized => "Jira API kimlik doğrulama hatası.",
+                    System.Net.HttpStatusCode.Forbidden => "Jira API erişim yetkisi yok.",
+                    System.Net.HttpStatusCode.BadRequest => $"Jira API geçersiz istek: {errorContent}",
+                    _ => $"Jira API hatası: {errorContent}"
+                };
+                
+                return StatusCode((int)response.StatusCode, new { 
+                    success = false,
+                    error = errorMessage,
+                    details = errorContent,
+                    jiraKey = jiraKey,
+                    fieldId = request.FieldId
+                });
+            }
+
+            var responseContent = await response.Content.ReadAsStringAsync();
+            _logger.LogInformation("Jira custom field başarıyla güncellendi: Key={Key}, Field={Field}", 
+                jiraKey, request.FieldId);
+
+            return Ok(new { 
+                success = true,
+                message = "Custom field başarıyla güncellendi",
+                jiraKey = jiraKey,
+                fieldId = request.FieldId,
+                value = request.Value
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Jira custom field güncelleme hatası: {Message}", ex.Message);
+            return StatusCode(500, new { 
+                success = false,
+                error = ex.Message
+            });
+        }
+    }
+}
+
+public class UpdateCustomFieldRequest
+{
+    public string FieldId { get; set; } = string.Empty;
+    public object Value { get; set; } = null!;
 }
 

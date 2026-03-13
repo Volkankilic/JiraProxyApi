@@ -402,16 +402,53 @@ public class JiraProxyController : ControllerBase
             httpClient.DefaultRequestHeaders.Add("User-Agent", "JiraProxyApi/1.0");
 
             // Jira API formatına göre request body oluştur
+            // Custom field'lar için değeri doğru formatta gönder
+            // Jira custom field'ları genellikle sayısal değerleri doğrudan kabul eder
+            // Ancak bazı durumlarda string olarak göndermek gerekebilir
+            object fieldValue = request.Value;
+            
+            // Eğer değer bir sayı ise, double olarak gönder (Jira API genellikle bunu kabul eder)
+            if (request.Value != null)
+            {
+                // JSON deserialization sonucu gelen değeri kontrol et
+                var valueType = request.Value.GetType();
+                
+                // Eğer JsonElement ise, tipine göre işle
+                if (request.Value is System.Text.Json.JsonElement jsonElement)
+                {
+                    if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    {
+                        // Sayısal değeri double olarak al
+                        fieldValue = jsonElement.GetDouble();
+                    }
+                    else if (jsonElement.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        fieldValue = jsonElement.GetString();
+                    }
+                }
+                // Eğer zaten bir sayı tipi ise (int, double, decimal, float)
+                else if (valueType == typeof(int) || valueType == typeof(double) || 
+                         valueType == typeof(decimal) || valueType == typeof(float))
+                {
+                    // Sayıyı double'a çevir (Jira API genellikle double kabul eder)
+                    fieldValue = Convert.ToDouble(request.Value);
+                }
+            }
+            
             var updateBody = new
             {
                 fields = new Dictionary<string, object>
                 {
-                    { request.FieldId, request.Value }
+                    { request.FieldId, fieldValue }
                 }
             };
 
             var jsonBody = System.Text.Json.JsonSerializer.Serialize(updateBody);
             var content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
+            
+            _logger.LogInformation("Jira custom field güncelleme: Key={Key}, Field={Field}, Value={Value}, ValueType={ValueType}", 
+                jiraKey, request.FieldId, fieldValue, fieldValue?.GetType().Name ?? "null");
+            _logger.LogInformation("Jira API request body: {RequestBody}", jsonBody);
 
             _logger.LogInformation("Jira custom field güncelleme: Key={Key}, Field={Field}, Value={Value}", 
                 jiraKey, request.FieldId, request.Value);
